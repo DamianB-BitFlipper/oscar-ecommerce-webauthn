@@ -208,6 +208,9 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
     def validate_registration_form(self):
         form = self.get_registration_form(bind_data=True)
         if form.is_valid():
+            print("I HAVE REGISTERED YOU!")
+            print(form)
+
             self.register_user(form)
 
             msg = self.get_registration_success_message(form)

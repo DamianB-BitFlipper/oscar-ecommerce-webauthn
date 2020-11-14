@@ -1,0 +1,18 @@
+{% extends "oscar/layout.html" %}
+{% load static %}
+
+{% block extrascripts %}
+{{ block.super }}
+<script src="{% static 'sandbox/js/base64.js' %}"></script>
+<script src="{% static 'sandbox/js/webauthn.js' %}"></script>
+{% endblock %}
+
+{% block onbodyload %}
+{{ block.super }}
+// Check whether current browser supports WebAuthn
+if (!window.PublicKeyCredential) {
+    alert("Error: this browser does not support WebAuthn");
+    return;
+}
+{% endblock %}
+
