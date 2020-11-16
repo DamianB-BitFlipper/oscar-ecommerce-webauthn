@@ -47,7 +47,9 @@ const registrationListenerHelper = async (form_id, begin_url, finish_url, e) => 
     try {
         credentialCreateOptionsFromServer = await getCredentialCreateOptionsFromServer(formData, begin_url);
     } catch (err) {
-        return console.error("Failed to generate credential request options:", err);
+        alert("Failed to generate credential request options: " + err);
+        window.location.reload(false);
+        return;
     }
 
     // convert certain members of the PublicKeyCredentialCreateOptions into
@@ -61,7 +63,9 @@ const registrationListenerHelper = async (form_id, begin_url, finish_url, e) => 
             publicKey: publicKeyCredentialCreateOptions
         });
     } catch (err) {
-        return console.error("Error creating credential:", err);
+        alert("Error creating credential: " + err);
+        window.location.reload(false);
+        return;
     }
 
     // we now have a new credential! We now need to encode the byte arrays
@@ -74,7 +78,9 @@ const registrationListenerHelper = async (form_id, begin_url, finish_url, e) => 
     try {
         assertionValidationResponse = await postNewAssertionToServer(formData, newAssertionForServer, finish_url);
     } catch (err) {
-        return console.error("Server validation of credential failed:", err);
+        alert("Server validation of credential failed: " + err);
+        window.location.reload(false);
+        return;
     }
     
     alert("Succesfully registered as: " + formData.get("registration-email"))
@@ -193,7 +199,9 @@ const attestationListenerHelper = async (form_id, begin_url, finish_url, e) => {
     try {
         credentialRequestOptionsFromServer = await getCredentialRequestOptionsFromServer(formData, begin_url);
     } catch (err) {
-        return console.error("Error when getting request options from server:", err);
+        alert("Error when getting request options from server: " + err);
+        window.location.reload(false);
+        return;
     }
 
     // convert certain members of the PublicKeyCredentialRequestOptions into
@@ -209,7 +217,9 @@ const attestationListenerHelper = async (form_id, begin_url, finish_url, e) => {
             publicKey: transformedCredentialRequestOptions,
         });
     } catch (err) {
-        return console.error("Error when creating credential:", err);
+        alert("Error when creating credential: " + err);
+        window.location.reload(false);
+        return;
     }
 
     // we now have an authentication assertion! encode the byte arrays contained
@@ -219,9 +229,11 @@ const attestationListenerHelper = async (form_id, begin_url, finish_url, e) => {
     // post the assertion to the server for verification.
     let response;
     try {
-        response = await postAssertionToServer(transformedAssertionForServer, finish_url);
+        response = await postAssertionToServer(formData, transformedAssertionForServer, finish_url);
     } catch (err) {
-        return console.error("Error when validating assertion on server:", err);
+        alert("Error when validating assertion on server: " + err);
+        window.location.reload(false);
+        return;
     }
 
     alert("Succesfully attestated request!");
@@ -301,8 +313,7 @@ const transformAssertionForServer = (newAssertion) => {
  * Post the assertion to the server for validation and logging the user in. 
  * @param {Object} assertionDataForServer 
  */
-const postAssertionToServer = async (assertionDataForServer, finish_url) => {
-    const formData = new FormData();
+const postAssertionToServer = async (formData, assertionDataForServer, finish_url) => {
     Object.entries(assertionDataForServer).forEach(([key, value]) => {
         formData.set(key, value);
     });

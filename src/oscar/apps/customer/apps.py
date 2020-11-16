@@ -84,10 +84,6 @@ class CustomerConfig(OscarConfig):
             # Login, logout and register doesn't require login
             path('login', self.login_view.as_view(), name='login'),
 
-            # TODO: Move this to the sanbox apps.py
-            path('register_begin/', self.login_view.as_view(), name='register_begin'),
-            path('register_finish/', self.login_view.as_view(), name='register_finish'),
-
             path('logout/', self.logout_view.as_view(), name='logout'),
             path('register/', self.register_view.as_view(), name='register'),
             path('', login_required(self.summary_view.as_view()), name='summary'),

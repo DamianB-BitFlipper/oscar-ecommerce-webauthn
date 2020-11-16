@@ -14,8 +14,8 @@ from oscar.apps.customer import signals
 import os
 import sys
 
-from customer.util import RP_ID, RP_NAME, ORIGIN
-import customer.util as util
+from customer.utils import RP_ID, RP_NAME, ORIGIN
+import customer.utils as utils
 import webauthn
 
 RegisterUserMixin = get_class('customer.mixins', 'RegisterUserMixin')
@@ -60,12 +60,11 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
             return self.webauthn_begin_register(request)
         elif 'register_finish' in request.path:
             return self.webauthn_finish_register(request)
+        elif 'login_begin' in request.path:
+            return self.webauthn_begin_login(request)
+        elif 'login_finish' in request.path:
+            return self.webauthn_finish_login(request)
         
-        # Use the name of the submit button to determine which form to validate
-        if 'login_submit' in request.POST:
-            return self.validate_login_form()
-        elif 'registration_submit' in request.POST:
-            return self.validate_registration_form()
         return http.HttpResponseBadRequest()
 
     # LOGIN
@@ -82,11 +81,13 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
         kwargs['initial'] = {
             'redirect_url': self.request.GET.get(self.redirect_field_name, ''),
         }
+
         if bind_data and self.request.method in ('POST', 'PUT'):
             kwargs.update({
                 'data': self.request.POST,
                 'files': self.request.FILES,
             })
+
         return kwargs
 
     def validate_login_form(self):
@@ -114,6 +115,103 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
 
         ctx = self.get_context_data(login_form=form)
         return self.render_to_response(ctx)
+
+    def webauthn_begin_login(self, request):
+        session = request.session
+
+        username = request.POST.get('login-username')
+
+        if not utils.validate_username(username):
+            return http.JsonResponse({'fail': 'Invalid username.'}, status=401)
+
+        user = User.objects.get(email=username)
+
+        if not user:
+            return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
+        if not user.credential_id:
+            return http.JsonResponse({'fail': 'Unknown credential ID.'}, status=401)
+
+        session.pop('challenge', None)
+
+        challenge = utils.generate_challenge(32)
+
+        # We strip the padding from the challenge stored in the session
+        # for the reasons outlined in the comment in webauthn_begin_activate.
+        session['challenge'] = challenge.rstrip('=')
+
+        display_name = user.username
+        webauthn_user = webauthn.WebAuthnUser(
+            user.ukey, user.username, display_name, user.icon_url,
+            user.credential_id, user.pub_key, user.sign_count, user.rp_id)
+
+        webauthn_assertion_options = webauthn.WebAuthnAssertionOptions(
+            webauthn_user, challenge)
+
+        return http.JsonResponse(webauthn_assertion_options.assertion_dict)
+
+    def webauthn_finish_login(self, request):
+        session = request.session
+    
+        challenge = session.get('challenge')
+    
+        assertion_response = request.POST
+        credential_id = assertion_response.get('id')
+
+        user = User.objects.get(credential_id=credential_id)
+
+        if not user:
+            return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
+
+        display_name = user.username
+        webauthn_user = webauthn.WebAuthnUser(
+            user.ukey, user.username, display_name, user.icon_url,
+            user.credential_id, user.pub_key, user.sign_count, user.rp_id)
+
+        webauthn_assertion_response = webauthn.WebAuthnAssertionResponse(
+            webauthn_user,
+            assertion_response,
+            challenge,
+            ORIGIN,
+            uv_required=False)  # User Verification
+   
+        try:
+            sign_count = webauthn_assertion_response.verify()
+        except Exception as e:
+            return http.JsonResponse({'fail': 'Assertion failed. Error: {}'.format(e)}, status=401)
+
+        form = self.get_login_form(bind_data=True)
+
+        # Attempt the log in
+        if form.is_valid():
+            # TODO: This may have race conditions if log in at same 
+            # time from different places 
+            #
+            # Increment the user signature count
+            user.sign_count = sign_count
+            user.save()
+
+            logged_in_user = form.get_user()
+
+            # Grab a reference to the session ID before logging in
+            old_session_key = self.request.session.session_key
+
+            auth_login(self.request, form.get_user())
+
+            # Raise signal robustly (we don't want exceptions to crash the
+            # request handling). We use a custom signal as we want to track the
+            # session key before calling login (which cycles the session ID).
+            signals.user_logged_in.send_robust(
+                sender=self, request=request, user=logged_in_user,
+                old_session_key=old_session_key)
+
+            msg = self.get_login_success_message(form)
+            if msg:
+                messages.success(request, msg)
+
+            return http.JsonResponse({'nexturl': self.get_login_success_url(form)})
+
+        return http.JsonResponse({'fail': 'Failed to log in user.\n' + form.errors.as_text()}, 
+                                 status=401)
 
     def get_login_success_message(self, form):
         return _("Welcome back")
@@ -173,15 +271,7 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
     
         # MakeCredentialOptions
         username = request.POST.get('registration-email')
-
-        # TODO: Move these validation checks into the EmailForm
-        if not util.validate_username(username):
-            return http.JsonResponse({'fail': 'Invalid username.'}, status=401)
     
-        # ADDED
-        #if User.objects.filter(email=username).exists():
-        #    return http.JsonResponse({'fail': 'User already exists.'}, status=401)
-
         #clear session variables prior to starting a new registration
         session.pop('register_ukey', None)
         session.pop('register_username', None)
@@ -189,8 +279,8 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
 
         session['register_username'] = username
 
-        challenge = util.generate_challenge(32)
-        ukey = util.generate_ukey()
+        challenge = utils.generate_challenge(32)
+        ukey = utils.generate_ukey()
 
         # We strip the saved challenge of padding, so that we can do a byte
         # comparison on the URL-safe-without-padding challenge we get back
@@ -272,7 +362,8 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
 
             return http.JsonResponse({'nexturl': self.get_registration_success_url(form)})
 
-        return http.JsonResponse({'fail': 'Failed to validate user attributes.'},  status=401)
+        return http.JsonResponse({'fail': 'Failed to register user.\n' + form.errors.as_text()},
+                                 status=401)
 
     def get_registration_success_message(self, form):
         return _("Thanks for registering!")

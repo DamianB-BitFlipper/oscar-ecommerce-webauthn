@@ -8,12 +8,13 @@
                                                         "{% url 'customer:register_begin' %}",
                                                         "{% url 'customer:register_finish' %}");
 
-  // var attestationListener = createAttestationListener('#login_form',
-  //                                                     "url 'customer:login_begin' %}",
-  //                                                     "url 'customer:login_finish' %}");
+  var attestationListener = createAttestationListener('#login_form',
+                                                      "{% url 'customer:login_begin' %}",
+                                                      "{% url 'customer:login_finish' %}");
+
   document.addEventListener("DOMContentLoaded", e => {
       document.querySelector('#registration_submit').addEventListener('click', registrationListener);
-      // document.querySelector('#login_button').addEventListener('click', attestationListener);
+      document.querySelector('#login_submit').addEventListener('click', attestationListener);
   });
 </script>
 {% endblock %}
@@ -39,16 +40,15 @@
 
     <div class="row">
         <div class="col-sm-6 login_form">
-            <form id="login_form" action="{{ request.get_full_path }}" method="post" class="card card-body bg-light" >
+            <form id="login_form" method="post" class="card card-body bg-light" >
                 <h2>{% trans 'Log In' %}</h2>
                 {% csrf_token %}
                 {% include "oscar/partials/form_fields.html" with form=login_form %}
                 <p><a href="{% url 'password-reset' %}">{% trans "I've forgotten my password" %}</a></p>
-                <button name="login_submit" type="submit" value="Log In" class="btn btn-lg btn-primary" data-loading-text="{% trans "Logging in..." %}">{% trans 'Log In' %}</button>
+                <button id="login_submit" type="submit" value="Log In" class="btn btn-lg btn-primary" data-loading-text="{% trans "Logging in..." %}">{% trans 'Log In' %}</button>
             </form>
         </div>
         <div class="col-sm-6 register_form">
-            <!-- ADDED <form id="register_form" action="{{ request.get_full_path }}" method="post" class="card card-body bg-light"> -->
             <form id="register_form" method="post" class="card card-body bg-light">
                 <h2>{% trans 'Register' %}</h2>
                 {% csrf_token %}
