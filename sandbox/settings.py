@@ -301,6 +301,8 @@ INSTALLED_APPS = [
     'django_extensions',
     'debug_toolbar',
     'sslserver', # Enable SSL for development server
+    'oscar_accounts.apps.AccountsConfig',
+    'oscar_accounts.dashboard.apps.AccountsDashboardConfig',
 
     # Sandbox apps
     'apps.user',

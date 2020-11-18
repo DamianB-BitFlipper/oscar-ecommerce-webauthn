@@ -18,6 +18,9 @@ from customer.utils import RP_ID, RP_NAME, ORIGIN
 import customer.utils as utils
 import webauthn
 
+PageTitleMixin = get_class('customer.mixins', 'PageTitleMixin')
+ConfirmPasswordForm = get_class('customer.forms', 'ConfirmPasswordForm')
+
 RegisterUserMixin = get_class('customer.mixins', 'RegisterUserMixin')
 EmailAuthenticationForm, EmailUserCreationForm = get_classes(
     'customer.forms', ['EmailAuthenticationForm', 'EmailUserCreationForm'])
@@ -56,6 +59,7 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
     def post(self, request, *args, **kwargs):
         # TODO: It would be nice to have the different request.path
         # be handled by different views/separate `post` functions
+        # like through an APIView
         if 'register_begin' in request.path:
             return self.webauthn_begin_register(request)
         elif 'register_finish' in request.path:
@@ -119,12 +123,12 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
     def webauthn_begin_login(self, request):
         session = request.session
 
-        username = request.POST.get('login-username')
+        email = request.POST.get('login-username')
 
-        if not utils.validate_username(username):
+        if not utils.validate_username(email):
             return http.JsonResponse({'fail': 'Invalid username.'}, status=401)
 
-        user = User.objects.get(email=username)
+        user = User.objects.get(email=email)
 
         if not user:
             return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
@@ -139,7 +143,7 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
         # for the reasons outlined in the comment in webauthn_begin_activate.
         session['challenge'] = challenge.rstrip('=')
 
-        display_name = user.username
+        display_name = user.email
         webauthn_user = webauthn.WebAuthnUser(
             user.ukey, user.username, display_name, user.icon_url,
             user.credential_id, user.pub_key, user.sign_count, user.rp_id)
@@ -162,7 +166,7 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
         if not user:
             return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
 
-        display_name = user.username
+        display_name = user.email
         webauthn_user = webauthn.WebAuthnUser(
             user.ukey, user.username, display_name, user.icon_url,
             user.credential_id, user.pub_key, user.sign_count, user.rp_id)
@@ -270,14 +274,14 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
         session = request.session
     
         # MakeCredentialOptions
-        username = request.POST.get('registration-email')
+        email = request.POST.get('registration-email')
     
         #clear session variables prior to starting a new registration
         session.pop('register_ukey', None)
         session.pop('register_username', None)
         session.pop('challenge', None)
 
-        session['register_username'] = username
+        session['register_username'] = email
 
         challenge = utils.generate_challenge(32)
         ukey = utils.generate_ukey()
@@ -290,9 +294,9 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
         session['challenge'] = challenge.rstrip('=')
         session['register_ukey'] = ukey
     
-        display_name = username
+        display_name = email
         make_credential_options = webauthn.WebAuthnMakeCredentialOptions(
-            challenge, RP_NAME, RP_ID, ukey, username, display_name,
+            challenge, RP_NAME, RP_ID, ukey, email, display_name,
             ORIGIN, attestation='none')
 
         return http.JsonResponse(make_credential_options.registration_dict)
@@ -374,3 +378,136 @@ class AccountAuthView(RegisterUserMixin, generic.TemplateView):
             return redirect_url
 
         return settings.LOGIN_REDIRECT_URL
+
+class ProfileDeleteView(PageTitleMixin, generic.FormView):
+    form_class = ConfirmPasswordForm
+    template_name = 'sandbox/customer/profile/profile_delete.html'
+    page_title = _('Delete profile')
+    active_tab = 'profile'
+    success_url = settings.OSCAR_HOMEPAGE
+
+    def post(self, request, *args, **kwargs):
+        # TODO: It would be nice to have the different request.path
+        # be handled by different views/separate `post` functions
+        # like through an APIView
+        if 'delete_begin' in request.path:
+            return self.webauthn_begin_delete_profile(request)
+        elif 'delete_finish' in request.path:
+            return self.webauthn_finish_delete_profile(request)
+
+        return http.HttpResponseBadRequest()
+
+    def webauthn_begin_delete_profile(self, request):
+        session = request.session
+
+        user = request.user
+
+        if not user:
+            return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
+        if not user.credential_id:
+            return http.JsonResponse({'fail': 'Unknown credential ID.'}, status=401)
+
+        session.pop('challenge', None)
+        session.pop('clientExtensions', None)
+
+        challenge = utils.generate_challenge(32)
+
+        # We strip the padding from the challenge stored in the session
+        # for the reasons outlined in the comment in webauthn_begin_activate.
+        session['challenge'] = challenge.rstrip('=')
+        session['clientExtensions'] = {'txAuthSimple': "Confirm deletion of account {}!".
+                                       format(user.email)}
+
+        display_name = user.email
+        webauthn_user = webauthn.WebAuthnUser(
+            user.ukey, user.username, display_name, user.icon_url,
+            user.credential_id, user.pub_key, user.sign_count, user.rp_id)
+
+        webauthn_assertion_options = webauthn.WebAuthnAssertionOptions(
+            webauthn_user, challenge,
+            clientExtensions=session['clientExtensions'])
+
+        return http.JsonResponse(webauthn_assertion_options.assertion_dict)
+
+    def webauthn_finish_delete_profile(self, request):
+        session = request.session
+    
+        challenge = session.get('challenge')
+        clientExtensions = session.get('clientExtensions')
+    
+        assertion_response = request.POST
+        credential_id = assertion_response.get('id')
+
+        user = User.objects.get(credential_id=credential_id)
+
+        if not user:
+            return http.JsonResponse({'fail': 'User does not exist.'}, status=401)
+
+        display_name = user.email
+        webauthn_user = webauthn.WebAuthnUser(
+            user.ukey, user.username, display_name, user.icon_url,
+            user.credential_id, user.pub_key, user.sign_count, user.rp_id)
+
+        # TODO: Shouldn't this extension verifier function be within the webauthn library?
+        def verify_authenticator_extensions_fn(client_data, expected_authenticator_extensions):
+            client_data_extensions = client_data.get('clientExtensions')
+        
+            # Make sure that the extensions dicts have the same keys
+            if client_data_extensions.keys() != expected_authenticator_extensions.keys():
+                return False
+
+            # Make sure that the key is only `txAuthSimple` for now
+            if client_data_extensions.keys() != {'txAuthSimple'}:
+                return False
+
+            # Test the `txAuthSimple` extension, except for line breaks
+            if client_data_extensions['txAuthSimple'].replace('\n', '') != \
+               expected_authenticator_extensions['txAuthSimple'].replace('\n', ''):
+                return False
+
+            # All passed
+            return True
+
+        webauthn_assertion_response = webauthn.WebAuthnAssertionResponse(
+            webauthn_user,
+            assertion_response,
+            challenge,
+            ORIGIN,
+            uv_required=False, # User Verification
+            expected_assertion_authenticator_extensions=clientExtensions,
+            verify_authenticator_extensions_fn=verify_authenticator_extensions_fn,
+        )
+   
+        try:
+            sign_count = webauthn_assertion_response.verify()
+        except Exception as e:
+            return http.JsonResponse({'fail': 'Assertion failed. Error: {}'.format(e)}, status=401)
+
+        form = self.get_form()
+
+        # Attempt the profile deletion
+        if form.is_valid():
+            # TODO: This may have race conditions if log in at same 
+            # time from different places 
+            #
+            # Increment the user signature count
+            user.sign_count = sign_count
+            user.save()
+
+            next_url = self.form_valid(form)
+            return http.JsonResponse({'nexturl': next_url})
+
+        return http.JsonResponse({'fail': 'Failed to delete user.\n' + form.errors.as_text()}, 
+                                 status=401)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['user'] = self.request.user
+        return kwargs
+
+    def form_valid(self, form):
+        self.request.user.delete()
+        messages.success(
+            self.request,
+            _("Your profile has now been deleted. Thanks for using the site."))
+        return self.get_success_url()

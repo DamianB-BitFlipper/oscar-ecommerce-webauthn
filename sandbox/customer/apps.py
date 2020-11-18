@@ -1,3 +1,4 @@
+from django.contrib.auth.decorators import login_required
 from django.urls import path
 
 import oscar.apps.customer.apps as apps
@@ -16,6 +17,9 @@ class CustomerConfig(apps.CustomerConfig):
 
             path('register_begin/', self.login_view.as_view(), name='register_begin'),
             path('register_finish/', self.login_view.as_view(), name='register_finish'),
+
+            path('profile/delete_begin/', login_required(self.profile_delete_view.as_view()), name='delete_profile_begin'),
+            path('profile/delete_finish/', login_required(self.profile_delete_view.as_view()), name='delete_profile_finish'),
         ]
 
         new_urls = self.post_process_urls(new_urls)
